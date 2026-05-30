@@ -1,0 +1,8 @@
+.env
+tmp/
+*.pdf
+bin/
+aislaydbot
+*.log
+.idea/
+.vscode/
