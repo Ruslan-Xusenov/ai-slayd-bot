@@ -14,7 +14,7 @@ error()   { echo -e "${RED}[ERR]${NC}  $1"; exit 1; }
 
 APP_DIR="/opt/ai-slayd-bot"
 SERVICE_NAME="ai-slayd-bot"
-GO_VERSION="1.22.3"
+GO_VERSION="1.23.4"
 
 echo ""
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -22,21 +22,26 @@ echo -e "${BLUE}  🚀  AI Slayd Bot — Server Setup${NC}"
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-# ── Go o'rnatish ─────────────────────────────────────────────
-if ! command -v go &>/dev/null && [ ! -f /usr/local/go/bin/go ]; then
-    info "Go $GO_VERSION o'rnatilmoqda..."
+# ── Go o'rnatish / yangilash ──────────────────────────────────
+INSTALLED_GO=""
+if [ -f /usr/local/go/bin/go ]; then
+    INSTALLED_GO=$(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}' | sed 's/go//')
+fi
+
+if [ "$INSTALLED_GO" = "$GO_VERSION" ]; then
+    success "Go $GO_VERSION allaqachon o'rnatilgan"
+else
+    info "Go $GO_VERSION o'rnatilmoqda (mavjud: ${INSTALLED_GO:-yo'q})..."
     wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz
     rm -rf /usr/local/go
     tar -C /usr/local -xzf /tmp/go.tar.gz
     rm /tmp/go.tar.gz
-    success "Go o'rnatildi"
-else
-    success "Go allaqachon mavjud"
+    success "Go $GO_VERSION o'rnatildi"
 fi
 
 export PATH=$PATH:/usr/local/go/bin
-echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc 2>/dev/null || true
-info "Go versiyasi: $(go version)"
+grep -qxF 'export PATH=$PATH:/usr/local/go/bin' ~/.bashrc || echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+info "Go versiyasi: $(/usr/local/go/bin/go version)"
 
 # ── .env fayl yaratish ───────────────────────────────────────
 info ".env fayli yaratilmoqda..."
@@ -53,8 +58,8 @@ mkdir -p "$APP_DIR/tmp"
 # ── Build qilish ─────────────────────────────────────────────
 info "Bot build qilinmoqda..."
 cd "$APP_DIR"
-go mod download
-go build -o ai-slayd-bot .
+/usr/local/go/bin/go mod download
+/usr/local/go/bin/go build -o ai-slayd-bot .
 success "Build muvaffaqiyatli!"
 
 # ── Systemd service ───────────────────────────────────────────
