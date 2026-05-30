@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const maxRetries = 3
+
 const deepseekBaseURL = "https://api.deepseek.com/v1"
 const deepseekModel = "deepseek-chat"
 
@@ -63,9 +65,33 @@ func NewDeepSeek(apiKey string) *DeepSeekClient {
 	}
 }
 
-// Generate — DeepSeek orqali taqdimot yaratadi
+// Generate — DeepSeek orqali taqdimot yaratadi (retry bilan)
 func (c *DeepSeekClient) Generate(ctx context.Context, prompt string, slideCount int) (*Presentation, error) {
 	log.Printf("🤖 DeepSeek model ishlatilmoqda: %s", deepseekModel)
+
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			waitSec := time.Duration(attempt*attempt) * time.Second
+			log.Printf("🔄 Qayta urinish %d/%d (%.0f soniyadan keyin)...", attempt, maxRetries, waitSec.Seconds())
+			select {
+			case <-time.After(waitSec):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		result, err := c.doGenerate(ctx, prompt, slideCount)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		log.Printf("⚠️  Urinish %d xatosi: %v", attempt, err)
+	}
+	return nil, fmt.Errorf("%d urinishdan keyin ham xato: %w", maxRetries, lastErr)
+}
+
+// doGenerate — bir marta API so'rov yuboradi
+func (c *DeepSeekClient) doGenerate(ctx context.Context, prompt string, slideCount int) (*Presentation, error) {
 
 	systemPrompt := `You are an expert presentation creator. Generate detailed, information-rich slides. ` +
 		`Each bullet point must be a long, complete, meaningful sentence (15-30 words minimum). ` +
@@ -92,7 +118,7 @@ Generate exactly %d slides. The JSON structure must be:
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: prompt},
 		},
-		MaxTokens:   4000,
+		MaxTokens:   8000,
 		Temperature: 0.7,
 		ResponseFormat: map[string]string{
 			"type": "json_object",
@@ -144,9 +170,12 @@ Generate exactly %d slides. The JSON structure must be:
 	raw := strings.TrimSpace(dsResp.Choices[0].Message.Content)
 	raw = stripFences(raw)
 
+	// Agar JSON kesilgan bo'lsa, tuzatishga harakat qilamiz
+	raw = fixTruncatedJSON(raw)
+
 	var p Presentation
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		return nil, fmt.Errorf("taqdimot JSON parse xatosi: %w | javob: %s", err, truncate(raw, 200))
+		return nil, fmt.Errorf("taqdimot JSON parse xatosi: %w | javob: %s", err, truncate(raw, 300))
 	}
 	if len(p.Slides) == 0 {
 		return nil, errors.New("slaydlar bo'sh")
@@ -155,4 +184,82 @@ Generate exactly %d slides. The JSON structure must be:
 		p.Slides = p.Slides[:slideCount]
 	}
 	return &p, nil
+}
+
+// fixTruncatedJSON — kesilgan JSONni tuzatishga harakat qiladi
+func fixTruncatedJSON(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+
+	// Agar allaqachon to'g'ri bo'lsa, o'zgartirmaymiz
+	var tmp interface{}
+	if json.Unmarshal([]byte(s), &tmp) == nil {
+		return s
+	}
+
+	// Ochilmagan qo'shtirnoqni yopamiz
+	inString := false
+	escaped := false
+	for _, ch := range s {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+		}
+	}
+	if inString {
+		s += "\""
+	}
+
+	// Yopilmagan ob'ekt/massivlarni yopamiz
+	opens := 0
+	squares := 0
+	inStr2 := false
+	esc2 := false
+	for _, ch := range s {
+		if esc2 {
+			esc2 = false
+			continue
+		}
+		if ch == '\\' && inStr2 {
+			esc2 = true
+			continue
+		}
+		if ch == '"' {
+			inStr2 = !inStr2
+			continue
+		}
+		if inStr2 {
+			continue
+		}
+		switch ch {
+		case '{':
+			opens++
+		case '}':
+			opens--
+		case '[':
+			squares++
+		case ']':
+			squares--
+		}
+	}
+	// Yetishmayotgan qavslarni qo'shamiz
+	for squares > 0 {
+		s += "]"
+		squares--
+	}
+	for opens > 0 {
+		s += "}"
+		opens--
+	}
+
+	return s
 }
